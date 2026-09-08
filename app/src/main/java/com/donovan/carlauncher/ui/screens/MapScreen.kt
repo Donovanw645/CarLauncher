@@ -202,7 +202,9 @@ fun MapScreen(
             RoundControl(
                 icon = Icons.Rounded.Explore,
                 contentDescription = "Toggle heading-up",
-                onClick = { mapHolder.toggleHeadingUp(car.location.heading.value) },
+                onClick = {
+                    car.prefs.update { it.copy(mapHeadingUp = !it.mapHeadingUp) }
+                },
                 size = 54.dp,
             )
             RoundControl(

@@ -35,6 +35,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -80,12 +82,12 @@ fun NavBanner(
     Box(
         modifier = modifier
             .background(scheme.surface.copy(alpha = 0.96f), RoundedCornerShape(20.dp))
-            .padding(horizontal = 16.dp, vertical = if (compact) 10.dp else 14.dp)
+            .padding(horizontal = 16.dp, vertical = if (compact) 13.dp else 14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(if (compact) 46.dp else 64.dp)
+                    .size(if (compact) 58.dp else 64.dp)
                     .background(scheme.primaryContainer, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center,
             ) {
@@ -93,21 +95,24 @@ fun NavBanner(
                     imageVector = maneuverIcon(step.maneuverType, step.modifier),
                     contentDescription = null,
                     tint = scheme.primary,
-                    modifier = Modifier.size(if (compact) 28.dp else 40.dp),
+                    modifier = Modifier.size(if (compact) 35.dp else 40.dp),
                 )
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = formatDistance(nav.distanceToManeuverM, units),
-                    style = if (compact) MaterialTheme.typography.titleLarge
+                    // The Home map is small, but the turn distance is the one thing you
+                    // read at a glance while driving, so the compact banner is scaled up
+                    // rather than left at the size the layout would otherwise suggest.
+                    style = if (compact) MaterialTheme.typography.titleLarge.scaled()
                     else MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.Bold,
                     color = scheme.primary,
                 )
                 Text(
                     text = step.instruction,
-                    style = if (compact) MaterialTheme.typography.bodyMedium
+                    style = if (compact) MaterialTheme.typography.bodyMedium.scaled()
                     else MaterialTheme.typography.titleLarge,
                     color = scheme.onSurface,
                     maxLines = 2,
@@ -183,3 +188,13 @@ private fun SummaryCell(label: String, value: String) {
         )
     }
 }
+
+/**
+ * 25% up on the token size. Compose's type scale moves in coarse steps - titleLarge to
+ * headlineMedium is a 27% jump in one direction and 0% in the other - so the compact
+ * banner scales its own tokens instead of hunting for a token that happens to fit.
+ */
+private fun TextStyle.scaled(factor: Float = 1.25f): TextStyle = copy(
+    fontSize = fontSize * factor,
+    lineHeight = if (lineHeight.isSpecified) lineHeight * factor else lineHeight,
+)

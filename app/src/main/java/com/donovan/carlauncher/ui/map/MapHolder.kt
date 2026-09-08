@@ -468,8 +468,13 @@ class MapHolder(context: Context) {
         m.moveCamera(CameraUpdateFactory.newCameraPosition(builder.build()))
     }
 
-    fun toggleHeadingUp(headingDegrees: Float) {
-        headingUp = !headingUp
+    /**
+     * Heading-up is now a persisted preference rather than a per-session toggle, so
+     * this is driven from settings instead of flipping its own state.
+     */
+    fun setHeadingUp(on: Boolean, headingDegrees: Float) {
+        if (headingUp == on) return
+        headingUp = on
         val m = map ?: return
         m.animateCamera(
             CameraUpdateFactory.newCameraPosition(

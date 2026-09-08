@@ -22,6 +22,10 @@ fun MapSync(car: CarController, mapHolder: MapHolder) {
         mapHolder.applyTheme(settings.mapTheme, settings.customTileUrl)
     }
 
+    LaunchedEffect(settings.mapHeadingUp, heading) {
+        mapHolder.setHeadingUp(settings.mapHeadingUp, heading)
+    }
+
     LaunchedEffect(location, heading) {
         val point = location?.let { LatLon(it.latitude, it.longitude) }
         mapHolder.setCar(point, heading)
