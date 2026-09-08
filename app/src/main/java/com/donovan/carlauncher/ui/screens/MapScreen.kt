@@ -89,18 +89,19 @@ fun MapScreen(
     MapSync(car, mapHolder)
     TrafficDots(car, mapHolder, onOpenCamera)
 
-    // Nominatim asks for no more than one request a second; debouncing keeps us well
-    // inside that and stops a search firing on every keystroke.
+    // Photon has no one-per-second policy the way Nominatim does, so this only has to
+    // be long enough to avoid firing mid-keystroke - short enough that results feel
+    // like they appear as you type.
     LaunchedEffect(query) {
         val q = query.trim()
-        if (q.length < 3) {
+        if (q.length < 2) {
             results = emptyList()
             searching = false
             return@LaunchedEffect
         }
         searching = true
         searchError = null
-        delay(600)
+        delay(180)
         runCatching { car.geocoder.search(q, car.location.currentPoint()) }
             .onSuccess { results = it }
             .onFailure {
@@ -330,11 +331,24 @@ private fun ResultRow(place: Place, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                place.address,
+                listOf(place.category.replace('_', ' '), place.address)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" · "),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+        // How far away it is decides more than anything else whether this is the one
+        // you meant, so it gets its own column rather than being buried in the address.
+        place.miles?.let { mi ->
+            Spacer(Modifier.width(10.dp))
+            Text(
+                if (mi < 10) "%.1f mi".format(mi) else "%.0f mi".format(mi),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
             )
         }
     }
