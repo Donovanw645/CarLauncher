@@ -29,7 +29,6 @@ import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Traffic
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.WifiOff
@@ -61,6 +60,7 @@ import com.donovan.carlauncher.ui.screens.DashcamScreen
 import com.donovan.carlauncher.ui.screens.HomeScreen
 import com.donovan.carlauncher.ui.screens.MapScreen
 import com.donovan.carlauncher.ui.screens.MediaScreen
+import com.donovan.carlauncher.ui.icons.SecurityCamera
 import com.donovan.carlauncher.ui.screens.SettingsScreen
 import com.donovan.carlauncher.update.isPending
 import java.text.SimpleDateFormat
@@ -72,7 +72,7 @@ enum class CarScreen(val label: String, val icon: ImageVector) {
     MAPS("Maps", Icons.Rounded.Map),
     MEDIA("Media", Icons.Rounded.LibraryMusic),
     DASHCAM("Dashcam", Icons.Rounded.Videocam),
-    CCTV("CCTV", Icons.Rounded.Traffic),
+    CCTV("CCTV", SecurityCamera),
     APPS("Apps", Icons.Rounded.Apps),
     SETTINGS("Settings", Icons.Rounded.Settings),
 }

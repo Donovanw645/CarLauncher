@@ -23,8 +23,8 @@ android {
         targetSdk = 35
         // Bump both on every release. versionCode must increase monotonically or the
         // updater on the tablet will refuse the build as a downgrade.
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
         resourceConfigurations += listOf("en")
     }
 
