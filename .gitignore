@@ -1,0 +1,22 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+build/
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.apk
+*.jks
+*.keystore
+
+carlauncher.jks
+keystore.properties
+
+# Kotlin incremental-compile session data
+.kotlin/
+
+# Release staging (update.json is published, not committed)
+build-release/

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cameras on the car sit on the local network and almost always speak plain HTTP
+  (mjpg-streamer, ustreamer, motion) or RTSP. Android blocks cleartext by default from
+  API 28 onward, which would make every one of them fail with a bare "Cleartext not
+  permitted".
+
+  Android's config cannot express "private address ranges only" - domain entries take
+  hostnames, not CIDR - so cleartext is permitted generally. Everything the launcher
+  itself talks to (OpenStreetMap, OSRM, Nominatim) is https and stays https.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
