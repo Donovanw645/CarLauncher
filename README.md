@@ -29,16 +29,62 @@ OSM has no live traffic and its routing is a bit blunter than Google's — see
 
 ## Installing
 
-1. Copy `apk/CarLauncher.apk` to the tablet (USB, Drive, email — whatever is easiest).
-2. On the tablet, open it with a file manager and tap **Install**. You will be asked to
-   allow installs from that app the first time.
+Only needed once — after this the launcher updates itself over the air.
+
+1. On the tablet, open
+   [the latest release](https://github.com/donovanw645/CarLauncher/releases/latest) and
+   download the `.apk`.
+2. Tap it. You will be asked to allow installs from your browser the first time.
 3. Open **Car Launcher**.
 
 Or over USB with debugging on:
 
 ```bash
-adb install -r apk/CarLauncher.apk
+adb install -r "%LOCALAPPDATA%\CarLauncherBuild\app\outputs\apk\release\CarLauncher-release-1.1-2.apk"
+elease\CarLauncher-release-1.1-2.apk"
 ```
+
+**Always install the release build, never the debug one.** They are signed with different
+keys, and Android refuses to update in place across a key change — which forces an uninstall
+and wipes every setting and permission on the tablet.
+
+## Updating
+
+After the first install the launcher updates itself. It checks
+[the latest release](https://github.com/donovanw645/CarLauncher/releases/latest) every few
+hours, and when a newer build exists a dot appears on the **Settings** icon in the nav rail.
+Open **Settings → Software update** and press **Install now**; Android shows one confirmation
+dialog and the launcher restarts on the new version.
+
+Nothing is lost in an update — settings, camera feeds, saved places, granted permissions,
+media-control access and the home-screen role all carry over, because it is an in-place
+update of an identically signed APK.
+
+Two deliberate limits:
+
+- **A download never happens over the phone hotspot.** Auto-download waits for an unmetered
+  network. You can always force it with **Download anyway**.
+- **Install is blocked while the dashcam is recording or navigation is running**, since
+  installing restarts the launcher.
+
+The one-time grant Android needs ("install unknown apps") is offered by a button in the same
+block the first time an update is ready.
+
+### Publishing a new version
+
+```bash
+tools/release.sh 1.2 "What changed in this build"
+```
+
+That bumps `versionCode`, builds a signed release, checks the signing certificate actually
+matches the installed one, writes `update.json`, commits, and publishes both to GitHub
+Releases. The tablet picks it up from a URL that never changes between releases:
+
+```
+https://github.com/donovanw645/CarLauncher/releases/latest/download/update.json
+```
+
+Needs the GitHub CLI (`winget install --id GitHub.cli`, then `gh auth login`).
 
 ## First run — three things to turn on
 
@@ -267,10 +313,13 @@ mid-build and causes random "Access is denied" failures otherwise.
 
 ### Signing key
 
-`CarLauncher/carlauncher.jks` signs the release build, with credentials in
-`CarLauncher/keystore.properties`. **Keep that file** — Android will refuse to install an
-update signed with a different key, so losing it means uninstalling and reinstalling.
-The password is `carlauncher`; change it if you ever put this anywhere public.
+`carlauncher.jks` signs the release build, with credentials in `keystore.properties`. Both
+are gitignored and must stay that way — the repo is public.
+
+**Back that keystore up.** Android refuses to install an update signed with a different key,
+so losing the file ends over-the-air updates permanently: every future version would need an
+uninstall and reinstall, wiping settings and permissions each time. Its SHA-256 is pinned in
+`tools/release.sh`, which refuses to publish an APK signed by anything else.
 
 ### Layout
 
@@ -290,6 +339,10 @@ CarLauncher/app/src/main/java/com/donovan/carlauncher/
   cctv/
     CameraStream.kt          MJPEG multipart / snapshot decoding
     CameraProbe.kt           The Test button: real connect, real frame
+  update/
+    UpdateManifest.kt        The published JSON, and the update state machine
+    Updater.kt               Check, download, verify SHA-256, PackageInstaller
+    InstallReceiver.kt       PackageInstaller status callbacks
   nav/
     Geo.kt                   Haversine, polyline decode, point-to-line, formatting
     GeocodeApi.kt            Nominatim search + reverse
