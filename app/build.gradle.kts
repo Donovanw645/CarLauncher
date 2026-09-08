@@ -23,8 +23,8 @@ android {
         targetSdk = 35
         // Bump both on every release. versionCode must increase monotonically or the
         // updater on the tablet will refuse the build as a downgrade.
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         resourceConfigurations += listOf("en")
     }

@@ -133,20 +133,42 @@ fun UpdateSection(car: CarController) {
                         Button(onClick = {
                             runCatching { context.startActivity(car.updater.unknownSourcesIntent()) }
                         }) { Text("Allow installs") }
-                    } else if (busy != null) {
-                        Text(
-                            "Installing restarts the launcher - not while $busy.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = scheme.onSurfaceVariant,
-                        )
                     } else {
+                        // Being mid-route or mid-recording is a reason to warn, not a
+                        // reason to hide the only button on the screen. Removing it
+                        // outright left an update that had already downloaded with no
+                        // visible way to install it and no explanation worth reading.
+                        if (busy != null) {
+                            Text(
+                                "Installing restarts the launcher, and $busy.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = scheme.error,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(onClick = { car.updater.install() }) { Text("Install now") }
+                            Button(onClick = { car.updater.install() }) {
+                                Text(if (busy != null) "Install anyway" else "Install now")
+                            }
                             TextButton(onClick = { car.updater.skip() }) { Text("Not now") }
                         }
                         Spacer(Modifier.height(6.dp))
                         Text(
                             "Your settings, camera feeds and permissions all carry over.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = scheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                is UpdateState.Installing -> {
+                    Spacer(Modifier.height(14.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "Installing ${s.manifest.versionName} - Android will ask you " +
+                                "to confirm, then the launcher restarts.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = scheme.onSurfaceVariant,
                         )
