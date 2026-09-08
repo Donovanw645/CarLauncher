@@ -20,3 +20,4 @@ keystore.properties
 
 # Release staging (update.json is published, not committed)
 build-release/
+dist/
