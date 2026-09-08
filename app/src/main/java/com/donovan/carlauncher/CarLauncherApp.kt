@@ -22,8 +22,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
-import org.osmdroid.config.Configuration
-import java.io.File
 
 /**
  * One place that owns every long-lived piece of the launcher. The app is a single
@@ -107,19 +105,6 @@ class CarLauncherApp : Application() {
         super.onCreate()
         controller = CarController(this)
 
-        // osmdroid needs a writable cache and a real User-Agent, or the OSM tile
-        // servers will (rightly) refuse to serve us.
-        val osmPrefs = getSharedPreferences("osmdroid", Context.MODE_PRIVATE)
-        Configuration.getInstance().apply {
-            load(this@CarLauncherApp, osmPrefs)
-            userAgentValue = Http.USER_AGENT
-            osmdroidBasePath = File(cacheDir, "osmdroid").apply { mkdirs() }
-            osmdroidTileCache = File(cacheDir, "osmdroid/tiles").apply { mkdirs() }
-            // ~200 MB of offline-ish tile cache: enough that a familiar commute keeps
-            // working when the phone hotspot drops out.
-            tileFileSystemCacheMaxBytes = 200L * 1024 * 1024
-            tileFileSystemCacheTrimBytes = 160L * 1024 * 1024
-        }
     }
 }
 

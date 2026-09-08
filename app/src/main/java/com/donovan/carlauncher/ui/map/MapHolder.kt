@@ -2,49 +2,45 @@ package com.donovan.carlauncher.ui.map
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Color
-import android.graphics.ColorFilter
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
-import android.graphics.Paint
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.view.MotionEvent
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
 import com.donovan.carlauncher.R
 import com.donovan.carlauncher.data.MapTheme
 import com.donovan.carlauncher.nav.LatLon
-import org.osmdroid.events.MapEventsReceiver
-import org.osmdroid.tileprovider.tilesource.ITileSource
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.tileprovider.tilesource.XYTileSource
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.CustomZoomButtonsController
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.MapEventsOverlay
-import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.Polyline
+import org.json.JSONArray
+import org.json.JSONObject
+import org.maplibre.android.MapLibre
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.Style
+import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.FillLayer
+import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.sources.GeoJsonSource
 import java.util.Calendar
 
-object TileSources {
+/** One camera's position on the map. */
+data class CameraDot(val id: String, val lat: Double, val lon: Double)
+
+object MapStyles {
 
     /**
-     * Standard OpenStreetMap raster tiles. Deliberately the default: it is the only
-     * good basemap that still works with no API key at all. The keyless CARTO and
-     * Stadia endpoints were both closed off, so anything prettier means bringing your
-     * own key via [custom].
+     * OpenFreeMap vector styles. Free, no API key, no rate limit - which matters,
+     * because the keyless CARTO and Stadia raster endpoints were both closed off and
+     * broke this app once already.
      */
-    val standard: ITileSource = TileSourceFactory.MAPNIK
+    const val DAY = "https://tiles.openfreemap.org/styles/liberty"
+    const val NIGHT = "https://tiles.openfreemap.org/styles/dark"
 
-    fun custom(baseUrl: String): ITileSource = XYTileSource(
-        "Custom", 0, 20, 256, ".png",
-        arrayOf(if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"),
-        "© OpenStreetMap contributors",
-    )
-
-    fun resolve(customUrl: String): ITileSource =
-        if (customUrl.isNotBlank()) custom(customUrl.trim()) else standard
-
-    /** Cheap day/night split; good enough to stop the map searing your eyes at 10pm. */
     fun isNight(): Boolean {
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         return hour < 7 || hour >= 19
@@ -57,87 +53,66 @@ object TileSources {
     }
 
     /**
-     * Night rendering without a dark tile set: invert the daytime tiles, then pull a
-     * little saturation back out so the inverted greens and pinks do not glow.
+     * A style document wrapping a plain XYZ raster server, so the custom tile URL in
+     * settings keeps working now that the renderer speaks vector tiles natively.
      */
-    val nightFilter: ColorFilter = ColorMatrixColorFilter(
-        ColorMatrix(
-            floatArrayOf(
-                -1f, 0f, 0f, 0f, 255f,
-                0f, -1f, 0f, 0f, 255f,
-                0f, 0f, -1f, 0f, 255f,
-                0f, 0f, 0f, 1f, 0f,
-            )
-        ).apply {
-            postConcat(ColorMatrix().apply { setSaturation(0.55f) })
-        }
-    )
+    fun rasterStyle(baseUrl: String): String {
+        val url = (if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/") + "{z}/{x}/{y}.png"
+        return JSONObject().apply {
+            put("version", 8)
+            put("sources", JSONObject().put(
+                "custom",
+                JSONObject().apply {
+                    put("type", "raster")
+                    put("tiles", JSONArray().put(url))
+                    put("tileSize", 256)
+                },
+            ))
+            put("layers", JSONArray().put(
+                JSONObject().apply {
+                    put("id", "custom")
+                    put("type", "raster")
+                    put("source", "custom")
+                },
+            ))
+        }.toString()
+    }
 }
 
 /**
- * Owns the single [MapView] instance. Creating one is expensive and it caches tiles in
- * memory, so the Home preview and the full Maps screen share this one object - they are
- * never on screen at the same time.
+ * Owns the single [MapView] instance and everything drawn on it.
+ *
+ * Creating a map is expensive and it caches tiles, so the Home preview and the full
+ * Maps screen share this one object - they are never on screen at the same time.
+ *
+ * MapLibre hands back its map and style asynchronously, unlike the osmdroid setup this
+ * replaced, so every setter here records what it was asked for and [applyAll] replays
+ * that onto the style once it arrives. Without that, anything set during startup - the
+ * restored camera, a route already in progress - would be silently dropped.
  */
 class MapHolder(context: Context) {
 
+    init {
+        MapLibre.getInstance(context)
+    }
+
     val mapView: MapView = MapView(context).apply {
-        // Critical for reuse. By default osmdroid tears the whole MapView down in
-        // onDetachedFromWindow - it nulls every overlay's geometry and detaches the tile
-        // provider - which happens every time Compose moves this view between the Home
-        // card and the Maps screen. Opting out means we own the teardown instead; see
-        // MainActivity.onDestroy.
-        setDestroyMode(false)
-        setTileSource(TileSources.standard)
-        setMultiTouchControls(true)
-        isTilesScaledToDpi = true
-        zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
-        setBackgroundColor(Color.parseColor("#0B0E13"))
-        minZoomLevel = 3.0
-        maxZoomLevel = 20.0
-        controller.setZoom(16.0)
+        onCreate(null)
     }
 
-    private val routeLine = Polyline(mapView).apply {
-        outlinePaint.apply {
-            color = Color.parseColor("#3DDC97")
-            strokeWidth = 16f
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
-            isAntiAlias = true
-        }
-        infoWindow = null
-    }
+    private var map: MapLibreMap? = null
+    private var style: Style? = null
 
-    private val routeCasing = Polyline(mapView).apply {
-        outlinePaint.apply {
-            color = Color.parseColor("#0C2A1E")
-            strokeWidth = 24f
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
-            isAntiAlias = true
-        }
-        infoWindow = null
-    }
+    // Desired state, held so it survives the async style load and style swaps.
+    private var car: LatLon? = null
+    private var carBearing: Float = 0f
+    private var destination: LatLon? = null
+    private var route: List<LatLon> = emptyList()
+    private var dots: List<CameraDot> = emptyList()
+    private var selectedCamera: String? = null
+    private var styleUri: String? = null
+    private var pendingCamera: CameraPosition? = null
 
-    private val destMarker = Marker(mapView).apply {
-        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-        icon = ContextCompat.getDrawable(context, R.drawable.ic_map_pin)
-        infoWindow = null
-        isEnabled = false
-    }
-
-    private val carMarker = Marker(mapView).apply {
-        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-        icon = ContextCompat.getDrawable(context, R.drawable.ic_map_car)
-        infoWindow = null
-        isFlat = true
-        isEnabled = false
-    }
-
-    private val cameraDots = CameraDotsOverlay()
-
-    /** True while the map should chase the car; a pan or pinch turns it off. */
     var following: Boolean = true
         private set
 
@@ -146,32 +121,76 @@ class MapHolder(context: Context) {
 
     private var onUserPan: (() -> Unit)? = null
     private var onLongPress: ((LatLon) -> Unit)? = null
-    private var lastTileSource: String? = null
-    private var lastNight: Boolean? = null
-
-    private val eventsOverlay = MapEventsOverlay(object : MapEventsReceiver {
-        override fun singleTapConfirmedHelper(p: GeoPoint?): Boolean = false
-
-        override fun longPressHelper(p: GeoPoint?): Boolean {
-            p ?: return false
-            val handler = onLongPress ?: return false
-            handler(LatLon(p.latitude, p.longitude))
-            return true
-        }
-    })
+    private var onCameraTap: ((String) -> Unit)? = null
 
     init {
-        routeLine.isEnabled = false
-        routeCasing.isEnabled = false
-        mapView.overlays.add(eventsOverlay)
-        mapView.overlays.add(cameraDots)
-        mapView.overlays.add(routeCasing)
-        mapView.overlays.add(routeLine)
-        mapView.overlays.add(destMarker)
-        mapView.overlays.add(carMarker)
+        mapView.getMapAsync { m ->
+            map = m
+            m.setMinZoomPreference(3.0)
+            m.setMaxZoomPreference(20.0)
+            m.uiSettings.apply {
+                isAttributionEnabled = false
+                isLogoEnabled = false
+                isCompassEnabled = false
+                isRotateGesturesEnabled = false // heading-up is a deliberate toggle
+                isTiltGesturesEnabled = false
+            }
+
+            m.addOnCameraMoveStartedListener { reason ->
+                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE &&
+                    following
+                ) {
+                    following = false
+                    onUserPan?.invoke()
+                }
+            }
+
+            m.addOnMapLongClickListener { p ->
+                onLongPress?.invoke(LatLon(p.latitude, p.longitude))
+                onLongPress != null
+            }
+
+            m.addOnMapClickListener { p ->
+                val handler = onCameraTap
+                if (handler == null) {
+                    false
+                } else {
+                    val screen = m.projection.toScreenLocation(p)
+                    // A finger is far bigger than a 5px dot, so search a box around it.
+                    val hit = m.queryRenderedFeatures(
+                        android.graphics.RectF(
+                            screen.x - TOUCH_SLOP, screen.y - TOUCH_SLOP,
+                            screen.x + TOUCH_SLOP, screen.y + TOUCH_SLOP,
+                        ),
+                        LAYER_CAMS,
+                    ).firstOrNull()
+                    val id = hit?.getStringProperty("id")
+                    if (id != null) {
+                        selectedCamera = id
+                        pushCameras()
+                        handler(id)
+                        true
+                    } else false
+                }
+            }
+
+            applyStyle(styleUri ?: MapStyles.DAY)
+            // osmdroid was constructed at zoom 16; MapLibre starts at world view, so
+            // without this a first run with no saved camera opens on the whole planet.
+            val start = pendingCamera ?: CameraPosition.Builder()
+                .target(LatLng(DEFAULT_LAT, DEFAULT_LON))
+                .zoom(DEFAULT_ZOOM)
+                .build()
+            m.moveCamera(CameraUpdateFactory.newCameraPosition(start))
+            pendingCamera = null
+        }
         attachTouchWatcher()
     }
 
+    /**
+     * The camera-move listener only fires once a gesture has actually moved the map, so
+     * a plain touch-down would not stop the map chasing the car until it was too late.
+     */
     @SuppressLint("ClickableViewAccessibility")
     private fun attachTouchWatcher() {
         mapView.setOnTouchListener { _, event ->
@@ -183,18 +202,15 @@ class MapHolder(context: Context) {
                     onUserPan?.invoke()
                 }
             }
-            false // let the MapView handle the gesture as usual
+            false
         }
     }
 
-    fun setOnUserPan(listener: (() -> Unit)?) {
-        onUserPan = listener
-    }
+    fun setOnUserPan(listener: (() -> Unit)?) { onUserPan = listener }
 
-    /** Long-pressing anywhere on the map offers it as a destination. */
-    fun setOnLongPress(listener: ((LatLon) -> Unit)?) {
-        onLongPress = listener
-    }
+    fun setOnLongPress(listener: ((LatLon) -> Unit)?) { onLongPress = listener }
+
+    fun setOnCameraTap(listener: ((String) -> Unit)?) { onCameraTap = listener }
 
     fun detachFromParent() {
         (mapView.parent as? ViewGroup)?.removeView(mapView)
@@ -203,122 +219,281 @@ class MapHolder(context: Context) {
     // ------------------------------------------------------------------ appearance
 
     fun applyTheme(theme: MapTheme, customUrl: String) {
-        val source = TileSources.resolve(customUrl)
-        if (lastTileSource != source.name()) {
-            lastTileSource = source.name()
-            mapView.setTileSource(source)
+        val wanted = when {
+            customUrl.isNotBlank() -> MapStyles.rasterStyle(customUrl.trim())
+            MapStyles.wantsNight(theme) -> MapStyles.NIGHT
+            else -> MapStyles.DAY
         }
-        // A custom tile set is assumed to already be styled the way the user wants it.
-        val night = customUrl.isBlank() && TileSources.wantsNight(theme)
-        if (night != lastNight) {
-            lastNight = night
-            mapView.overlayManager.tilesOverlay.setColorFilter(
-                if (night) TileSources.nightFilter else null
-            )
-        }
-        mapView.invalidate()
+        if (wanted == styleUri) return
+        styleUri = wanted
+        applyStyle(wanted)
     }
 
-    // ------------------------------------------------------------------ contents
-
-    fun setCar(point: LatLon?, headingDegrees: Float) {
-        if (point == null) {
-            carMarker.isEnabled = false
-            return
-        }
-        carMarker.isEnabled = true
-        carMarker.position = GeoPoint(point.lat, point.lon)
-        // The icon points north; counter-rotate it when the map itself is rotated.
-        carMarker.rotation = if (headingUp) 0f else -headingDegrees
-        mapView.invalidate()
-    }
-
-    fun setDestination(point: LatLon?) {
-        if (point == null) {
-            destMarker.isEnabled = false
+    private fun applyStyle(uri: String) {
+        val m = map ?: return
+        val builder = if (uri.startsWith("http")) {
+            Style.Builder().fromUri(uri)
         } else {
-            destMarker.isEnabled = true
-            destMarker.position = GeoPoint(point.lat, point.lon)
+            Style.Builder().fromJson(uri)
         }
-        mapView.invalidate()
-    }
-
-    /** Blue dots for the public traffic cameras currently in range. */
-    fun setCameraDots(dots: List<CameraDot>) {
-        if (cameraDots.dots == dots) return
-        cameraDots.dots = dots
-        mapView.invalidate()
-    }
-
-    fun setSelectedCamera(id: String?) {
-        if (cameraDots.selectedId == id) return
-        cameraDots.selectedId = id
-        mapView.invalidate()
-    }
-
-    /** Tapping a dot hands back the camera id so the CCTV tab can jump to it. */
-    fun setOnCameraTap(listener: ((String) -> Unit)?) {
-        cameraDots.onTap = listener
-    }
-
-    fun setRoute(points: List<LatLon>) {
-        if (points.isEmpty()) {
-            clearRoute()
-            return
+        m.setStyle(builder) { s ->
+            style = s
+            if (uri == MapStyles.NIGHT) brightenNightRoads(s)
+            buildLayers(s)
+            applyAll()
         }
-        val geo = points.map { GeoPoint(it.lat, it.lon) }
-        routeLine.setPoints(geo)
-        routeCasing.setPoints(geo)
-        routeLine.isEnabled = true
-        routeCasing.isEnabled = true
-        mapView.invalidate()
     }
 
     /**
-     * Hides the route rather than emptying it: osmdroid throws from
-     * Polyline.setPoints(emptyList()).
+     * OpenFreeMap's dark style is built as a quiet backdrop for data overlays, not as
+     * something you navigate by: the background is rgb(12,12,12) and minor roads are
+     * #181818, which is very nearly black on black. These overrides lift the road
+     * network back to readable contrast while keeping the map dark enough for night
+     * driving. Every lookup is null-safe, so if upstream renames a layer the map simply
+     * keeps that layer's own colour instead of breaking.
      */
-    fun clearRoute() {
-        routeLine.isEnabled = false
-        routeCasing.isEnabled = false
-        destMarker.isEnabled = false
-        mapView.invalidate()
+    private fun brightenNightRoads(s: Style) {
+        fun line(id: String, color: String) {
+            s.getLayerAs<LineLayer>(id)?.setProperties(PropertyFactory.lineColor(color))
+        }
+        line("highway_minor", "#3C3C41")
+        line("highway_major_inner", "#6E6E75")
+        line("highway_major_subtle", "#4A4A50")
+        line("highway_motorway_inner", "#C9A227")   // amber, the way night maps mark motorways
+        line("highway_motorway_subtle", "#6B5A1E")
+        line("highway_path", "#2E2E33")
+        // Water at rgb(27,27,29) is invisible; a little blue helps you place yourself.
+        s.getLayerAs<FillLayer>("water")
+            ?.setProperties(PropertyFactory.fillColor("#132430"))
     }
 
-    // ------------------------------------------------------------------ camera
+    /** Sources and layers are recreated from scratch every time the style changes. */
+    private fun buildLayers(s: Style) {
+        s.addImage(IMG_CAR, drawableToBitmap(R.drawable.ic_map_car))
+        s.addImage(IMG_PIN, drawableToBitmap(R.drawable.ic_map_pin))
+
+        s.addSource(GeoJsonSource(SRC_ROUTE, EMPTY_FC))
+        s.addSource(GeoJsonSource(SRC_CAMS, EMPTY_FC))
+        s.addSource(GeoJsonSource(SRC_DEST, EMPTY_FC))
+        s.addSource(GeoJsonSource(SRC_CAR, EMPTY_FC))
+
+        // Casing under the line so the route reads as a single stroked ribbon.
+        s.addLayer(
+            LineLayer(LAYER_ROUTE_CASING, SRC_ROUTE).withProperties(
+                PropertyFactory.lineColor("#0C2A1E"),
+                PropertyFactory.lineWidth(12f),
+                PropertyFactory.lineCap("round"),
+                PropertyFactory.lineJoin("round"),
+            )
+        )
+        s.addLayer(
+            LineLayer(LAYER_ROUTE, SRC_ROUTE).withProperties(
+                PropertyFactory.lineColor("#3DDC97"),
+                PropertyFactory.lineWidth(8f),
+                PropertyFactory.lineCap("round"),
+                PropertyFactory.lineJoin("round"),
+            )
+        )
+        s.addLayer(
+            CircleLayer(LAYER_CAMS, SRC_CAMS).withProperties(
+                PropertyFactory.circleColor("#4DA3FF"),
+                PropertyFactory.circleRadius(6f),
+                PropertyFactory.circleStrokeColor("#EAF4FF"),
+                PropertyFactory.circleStrokeWidth(2f),
+            )
+        )
+        s.addLayer(
+            SymbolLayer(LAYER_DEST, SRC_DEST).withProperties(
+                PropertyFactory.iconImage(IMG_PIN),
+                PropertyFactory.iconAllowOverlap(true),
+                PropertyFactory.iconIgnorePlacement(true),
+            )
+        )
+        s.addLayer(
+            SymbolLayer(LAYER_CAR, SRC_CAR).withProperties(
+                PropertyFactory.iconImage(IMG_CAR),
+                PropertyFactory.iconAllowOverlap(true),
+                PropertyFactory.iconIgnorePlacement(true),
+                PropertyFactory.iconRotate(0f),
+            )
+        )
+    }
+
+    private fun applyAll() {
+        pushCar()
+        pushDestination()
+        pushRoute()
+        pushCameras()
+    }
+
+    private fun drawableToBitmap(resId: Int): Bitmap {
+        val d = ContextCompat.getDrawable(mapView.context, resId)!!
+        val w = d.intrinsicWidth.coerceAtLeast(1)
+        val h = d.intrinsicHeight.coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        d.setBounds(0, 0, w, h)
+        d.draw(Canvas(bmp))
+        return bmp
+    }
+
+    // -------------------------------------------------------------------- contents
+
+    fun setCar(point: LatLon?, headingDegrees: Float) {
+        car = point
+        carBearing = headingDegrees
+        pushCar()
+    }
+
+    private fun pushCar() {
+        val s = style ?: return
+        s.getSourceAs<GeoJsonSource>(SRC_CAR)?.setGeoJson(pointFc(car))
+        // The icon points north; counter-rotate when the map itself is turned.
+        val rotation = if (headingUp) 0f else carBearing
+        s.getLayerAs<SymbolLayer>(LAYER_CAR)
+            ?.setProperties(PropertyFactory.iconRotate(rotation))
+    }
+
+    fun setDestination(point: LatLon?) {
+        destination = point
+        pushDestination()
+    }
+
+    private fun pushDestination() {
+        style?.getSourceAs<GeoJsonSource>(SRC_DEST)?.setGeoJson(pointFc(destination))
+    }
+
+    fun setRoute(points: List<LatLon>) {
+        route = points
+        pushRoute()
+    }
+
+    private fun pushRoute() {
+        val s = style ?: return
+        val fc = if (route.size < 2) EMPTY_FC else {
+            val coords = JSONArray()
+            for (p in route) coords.put(JSONArray().put(p.lon).put(p.lat))
+            featureCollection(
+                JSONObject().apply {
+                    put("type", "Feature")
+                    put("properties", JSONObject())
+                    put("geometry", JSONObject().put("type", "LineString").put("coordinates", coords))
+                }
+            )
+        }
+        s.getSourceAs<GeoJsonSource>(SRC_ROUTE)?.setGeoJson(fc)
+    }
+
+    fun clearRoute() {
+        route = emptyList()
+        destination = null
+        pushRoute()
+        pushDestination()
+    }
+
+    /** Blue dots for the public traffic cameras currently in range. */
+    fun setCameraDots(newDots: List<CameraDot>) {
+        if (dots == newDots) return
+        dots = newDots
+        selectedCamera = selectedCamera?.takeIf { id -> newDots.any { it.id == id } }
+        pushCameras()
+    }
+
+    fun setSelectedCamera(id: String?) {
+        if (selectedCamera == id) return
+        selectedCamera = id
+        pushCameras()
+    }
+
+    private fun pushCameras() {
+        val s = style ?: return
+        val features = JSONArray()
+        for (d in dots) {
+            features.put(
+                JSONObject().apply {
+                    put("type", "Feature")
+                    put("properties", JSONObject().apply {
+                        put("id", d.id)
+                        put("selected", d.id == selectedCamera)
+                    })
+                    put("geometry", JSONObject().apply {
+                        put("type", "Point")
+                        put("coordinates", JSONArray().put(d.lon).put(d.lat))
+                    })
+                }
+            )
+        }
+        s.getSourceAs<GeoJsonSource>(SRC_CAMS)
+            ?.setGeoJson(JSONObject().put("type", "FeatureCollection").put("features", features).toString())
+    }
+
+    private fun pointFc(p: LatLon?): String = if (p == null) EMPTY_FC else featureCollection(
+        JSONObject().apply {
+            put("type", "Feature")
+            put("properties", JSONObject())
+            put("geometry", JSONObject().apply {
+                put("type", "Point")
+                put("coordinates", JSONArray().put(p.lon).put(p.lat))
+            })
+        }
+    )
+
+    private fun featureCollection(feature: JSONObject): String = JSONObject()
+        .put("type", "FeatureCollection")
+        .put("features", JSONArray().put(feature))
+        .toString()
+
+    // ---------------------------------------------------------------------- camera
 
     fun recenter(point: LatLon?, headingDegrees: Float, zoom: Double? = null) {
         following = true
+        val m = map ?: return
         point ?: return
-        mapView.controller.animateTo(GeoPoint(point.lat, point.lon))
-        if (zoom != null) mapView.controller.setZoom(zoom)
-        if (headingUp) mapView.mapOrientation = -headingDegrees
+        val builder = CameraPosition.Builder(m.cameraPosition)
+            .target(LatLng(point.lat, point.lon))
+        if (zoom != null) builder.zoom(zoom)
+        if (headingUp) builder.bearing(headingDegrees.toDouble())
+        m.animateCamera(CameraUpdateFactory.newCameraPosition(builder.build()))
     }
 
     fun followCar(point: LatLon?, headingDegrees: Float) {
         if (!following || point == null) return
-        mapView.controller.setCenter(GeoPoint(point.lat, point.lon))
-        if (headingUp) mapView.mapOrientation = -headingDegrees
+        val m = map ?: return
+        val builder = CameraPosition.Builder(m.cameraPosition)
+            .target(LatLng(point.lat, point.lon))
+        // A first fix arriving while the map is still at its opening zoom should pull
+        // in to something you can drive by. Panning clears `following`, so this cannot
+        // fight a deliberate zoom-out.
+        if (m.cameraPosition.zoom < DRIVING_ZOOM_FLOOR) builder.zoom(DEFAULT_ZOOM)
+        if (headingUp) builder.bearing(headingDegrees.toDouble())
+        m.moveCamera(CameraUpdateFactory.newCameraPosition(builder.build()))
     }
 
     fun toggleHeadingUp(headingDegrees: Float) {
         headingUp = !headingUp
-        mapView.mapOrientation = if (headingUp) -headingDegrees else 0f
-        mapView.invalidate()
+        val m = map ?: return
+        m.animateCamera(
+            CameraUpdateFactory.newCameraPosition(
+                CameraPosition.Builder(m.cameraPosition)
+                    .bearing(if (headingUp) headingDegrees.toDouble() else 0.0)
+                    .build()
+            )
+        )
+        pushCar()
     }
 
-    fun zoomIn() = mapView.controller.zoomIn()
+    fun zoomIn() { map?.animateCamera(CameraUpdateFactory.zoomIn()) }
 
-    fun zoomOut() = mapView.controller.zoomOut()
+    fun zoomOut() { map?.animateCamera(CameraUpdateFactory.zoomOut()) }
 
     /** Frames a whole route with padding so the driver can see where they are going. */
     fun zoomToRoute(points: List<LatLon>) {
         if (points.size < 2) return
+        val m = map ?: return
         following = false
-        val box = org.osmdroid.util.BoundingBox.fromGeoPoints(
-            points.map { GeoPoint(it.lat, it.lon) }
-        )
-        runCatching { mapView.zoomToBoundingBox(box, true, 120) }
+        val bounds = LatLngBounds.Builder()
+            .includes(points.map { LatLng(it.lat, it.lon) })
+            .build()
+        runCatching { m.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 120)) }
     }
 
     /**
@@ -327,22 +502,62 @@ class MapHolder(context: Context) {
      */
     fun restoreCamera(lat: Double, lon: Double, zoom: Double) {
         if (lat.isNaN() || lon.isNaN()) return
-        mapView.controller.setZoom(zoom.coerceIn(3.0, 20.0))
-        mapView.controller.setCenter(GeoPoint(lat, lon))
+        val position = CameraPosition.Builder()
+            .target(LatLng(lat, lon))
+            .zoom(zoom.coerceIn(3.0, 20.0))
+            .build()
+        val m = map
+        // Usually called before the map is ready; hold it until it is.
+        if (m == null) pendingCamera = position
+        else m.moveCamera(CameraUpdateFactory.newCameraPosition(position))
     }
 
-    fun cameraLat(): Double = mapView.mapCenter.latitude
+    fun cameraLat(): Double = map?.cameraPosition?.target?.latitude ?: Double.NaN
 
-    fun cameraLon(): Double = mapView.mapCenter.longitude
+    fun cameraLon(): Double = map?.cameraPosition?.target?.longitude ?: Double.NaN
 
-    fun cameraZoom(): Double = mapView.zoomLevelDouble
+    fun cameraZoom(): Double = map?.cameraPosition?.zoom ?: 16.0
+
+    // ------------------------------------------------------------------- lifecycle
+
+    fun onStart() = mapView.onStart()
 
     fun onResume() = mapView.onResume()
 
     fun onPause() = mapView.onPause()
 
-    /** Real teardown, since [setDestroyMode] is off. Call once, when the activity dies. */
+    fun onStop() = mapView.onStop()
+
+    fun onLowMemory() = mapView.onLowMemory()
+
     fun destroy() {
-        runCatching { mapView.onDetach() }
+        runCatching { mapView.onDestroy() }
+    }
+
+    private companion object {
+        const val SRC_ROUTE = "car-route"
+        const val SRC_CAMS = "car-cams"
+        const val SRC_DEST = "car-dest"
+        const val SRC_CAR = "car-position"
+
+        const val LAYER_ROUTE_CASING = "car-route-casing"
+        const val LAYER_ROUTE = "car-route-line"
+        const val LAYER_CAMS = "car-cams-dots"
+        const val LAYER_DEST = "car-dest-pin"
+        const val LAYER_CAR = "car-marker"
+
+        const val IMG_CAR = "car-icon"
+        const val IMG_PIN = "pin-icon"
+
+        const val TOUCH_SLOP = 28f
+
+        const val DEFAULT_ZOOM = 16.0
+        const val DRIVING_ZOOM_FLOOR = 10.0
+        // Roughly the middle of California - only ever seen for the instant before the
+        // first GPS fix on a fresh install.
+        const val DEFAULT_LAT = 36.7783
+        const val DEFAULT_LON = -119.4179
+
+        const val EMPTY_FC = """{"type":"FeatureCollection","features":[]}"""
     }
 }

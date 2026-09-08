@@ -23,8 +23,9 @@ android {
         targetSdk = 35
         // Bump both on every release. versionCode must increase monotonically or the
         // updater on the tablet will refuse the build as a downgrade.
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         resourceConfigurations += listOf("en")
     }
 
@@ -96,7 +97,7 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.animation)
 
-    implementation(libs.osmdroid.android)
+    implementation(libs.maplibre.android)
 
     implementation(libs.androidx.media)
     implementation(libs.androidx.lifecycle.service)

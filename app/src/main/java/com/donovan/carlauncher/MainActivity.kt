@@ -95,6 +95,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        mapHolder.onStart()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        mapHolder.onStop()
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        mapHolder.onLowMemory()
+    }
+
     override fun onResume() {
         super.onResume()
         goFullScreen()
