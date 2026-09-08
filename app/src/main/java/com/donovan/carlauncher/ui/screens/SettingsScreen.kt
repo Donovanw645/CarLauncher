@@ -39,14 +39,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.donovan.carlauncher.CarController
-import com.donovan.carlauncher.cctv.ProbeResult
-import com.donovan.carlauncher.cctv.probeCamera
 import com.donovan.carlauncher.dashcam.Dashcam
 import com.donovan.carlauncher.dashcam.formatBytes
 import com.donovan.carlauncher.data.CameraFacing
-import com.donovan.carlauncher.data.CameraFeed
 import com.donovan.carlauncher.data.DashcamQuality
-import com.donovan.carlauncher.data.MAX_CAMERAS
 import com.donovan.carlauncher.data.MapTheme
 import com.donovan.carlauncher.data.OrientationMode
 import com.donovan.carlauncher.data.SavedPlace
@@ -249,39 +245,21 @@ fun SettingsScreen(
         }
 
         // -------------------------------------------------------------------- cctv
-        SettingsGroup("Cameras (CCTV)") {
-            ChoiceRow(
-                label = "Feeds on screen at once",
-                options = listOf(1 to "1 camera", 2 to "2 cameras", 4 to "4 cameras"),
-                selected = settings.cctvLayout,
-                onSelect = { v -> car.prefs.update { it.copy(cctvLayout = v) } },
-            )
+        SettingsGroup("Traffic cameras (CCTV)") {
             Text(
-                "MJPEG, snapshot, RTSP and HLS are all handled - paste whatever your " +
-                    "streaming server gives you and press Test. Examples: " +
-                    "http://192.168.1.50:8080/?action=stream (mjpg-streamer), " +
-                    "rtsp://192.168.1.50:8554/front (MediaMTX), " +
-                    "http://192.168.1.50/snapshot.jpg (still image).",
+                "Public Caltrans highway cameras near the car. The list and its " +
+                    "snapshots come from Caltrans, so nothing here needs a camera of " +
+                    "your own.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(4.dp))
-            for (slot in 0 until MAX_CAMERAS) {
-                CameraSlotRow(
-                    slot = slot,
-                    feed = settings.cameras.getOrNull(slot),
-                    onSave = { updated ->
-                        car.prefs.update { s ->
-                            val list = MutableList(MAX_CAMERAS) { i ->
-                                s.cameras.getOrNull(i) ?: CameraFeed("", "")
-                            }
-                            list[slot] = updated
-                            // Trim trailing empties so the list stays tidy.
-                            s.copy(cameras = list.dropLastWhile { it.url.isBlank() })
-                        }
-                    },
-                )
-            }
+            ChoiceRow(
+                label = "Search radius",
+                options = listOf(10 to "10 mi", 25 to "25 mi", 50 to "50 mi", 100 to "100 mi"),
+                selected = settings.cctvRadiusMiles,
+                onSelect = { v -> car.prefs.update { it.copy(cctvRadiusMiles = v) } },
+            )
         }
 
         // -------------------------------------------------------------- permissions
@@ -487,92 +465,6 @@ private fun TextRow(
 /**
  * One camera slot: a name, a URL, and a Test that actually connects and pulls a frame.
  */
-@Composable
-private fun CameraSlotRow(
-    slot: Int,
-    feed: CameraFeed?,
-    onSave: (CameraFeed) -> Unit,
-) {
-    val scheme = MaterialTheme.colorScheme
-    var name by remember(feed?.name) { mutableStateOf(feed?.name.orEmpty()) }
-    var url by remember(feed?.url) { mutableStateOf(feed?.url.orEmpty()) }
-    var testing by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<ProbeResult?>(null) }
-    val scope = rememberCoroutineScope()
-
-    val dirty = name != feed?.name.orEmpty() || url != feed?.url.orEmpty()
-
-    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-        RowLabels(
-            "Camera ${slot + 1}",
-            feed?.url?.takeIf { it.isNotBlank() } ?: "Not set",
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                modifier = Modifier.width(200.dp),
-                singleLine = true,
-                placeholder = { Text(if (slot == 0) "Front" else "Rear") },
-                shape = RoundedCornerShape(14.dp),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = scheme.surfaceVariant,
-                    unfocusedContainerColor = scheme.surfaceVariant,
-                ),
-            )
-            Spacer(Modifier.width(10.dp))
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it; result = null },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                // Autocorrect and sentence capitalisation will happily turn a typed
-                // address into one the server 404s on. Paths are case sensitive.
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Uri,
-                    autoCorrectEnabled = false,
-                    capitalization = KeyboardCapitalization.None,
-                ),
-                placeholder = { Text("http://192.168.1.50:8080/?action=stream") },
-                shape = RoundedCornerShape(14.dp),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = scheme.surfaceVariant,
-                    unfocusedContainerColor = scheme.surfaceVariant,
-                ),
-            )
-            Spacer(Modifier.width(10.dp))
-            if (testing) {
-                CircularProgressIndicator(Modifier.width(24.dp).height(24.dp))
-                Spacer(Modifier.width(10.dp))
-            }
-            Button(
-                enabled = url.isNotBlank() && !testing,
-                onClick = {
-                    testing = true
-                    result = null
-                    scope.launch {
-                        result = probeCamera(url)
-                        testing = false
-                    }
-                },
-            ) { Text("Test") }
-            Spacer(Modifier.width(8.dp))
-            Button(enabled = dirty, onClick = { onSave(CameraFeed(name.trim(), url.trim())) }) {
-                Text("Save")
-            }
-        }
-        result?.let { r ->
-            Spacer(Modifier.height(6.dp))
-            Text(
-                (if (r.ok) "OK · " else "Failed · ") + r.detail,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (r.ok) scheme.primary else scheme.error,
-            )
-        }
-    }
-}
-
 /** Set Home / Work by typing an address; the first search hit is stored. */
 @Composable
 private fun SavedPlaceRow(

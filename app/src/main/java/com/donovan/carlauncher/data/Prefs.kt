@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.json.JSONArray
 import org.json.JSONObject
 
 enum class Units { IMPERIAL, METRIC }
@@ -22,12 +21,6 @@ enum class DashcamQuality(val label: String) {
 }
 
 enum class CameraFacing { BACK, FRONT }
-
-/** One network camera on the car, shown in the CCTV tab. */
-data class CameraFeed(
-    val name: String,
-    val url: String,
-)
 
 /** A saved shortcut (Home / Work / favourite). */
 data class SavedPlace(
@@ -67,10 +60,8 @@ data class CarSettings(
     val dashStorageIndex: Int = 0,
 
     // CCTV
-    /** How many camera tiles to show at once: 1, 2 or 4. */
-    val cctvLayout: Int = 2,
-    /** Configured cameras, up to [MAX_CAMERAS]. Blank URLs are ignored. */
-    val cameras: List<CameraFeed> = emptyList(),
+    /** How far from the car to look for public Caltrans cameras. */
+    val cctvRadiusMiles: Int = 25,
 
     // Software updates
     /** Poll the update channel in the background. */
@@ -81,12 +72,7 @@ data class CarSettings(
     val updateLastCheckMs: Long = 0L,
     /** A versionCode the user chose to pass on. */
     val updateSkippedVersion: Int = 0,
-) {
-    val activeCameras: List<CameraFeed>
-        get() = cameras.filter { it.url.isNotBlank() }
-}
-
-const val MAX_CAMERAS = 4
+)
 
 /**
  * Where the launcher looks for new builds of itself. The address is fixed forever;
@@ -138,8 +124,7 @@ class Prefs(context: Context) {
         dashRecordAudio = sp.getBoolean(K_DASH_AUDIO, false),
         dashAutoStart = sp.getBoolean(K_DASH_AUTOSTART, false),
         dashStorageIndex = sp.getInt(K_DASH_STORAGE_INDEX, 0),
-        cctvLayout = sp.getInt(K_CCTV_LAYOUT, 2),
-        cameras = readCameras(),
+        cctvRadiusMiles = sp.getInt(K_CCTV_RADIUS, 25),
         updateCheckEnabled = sp.getBoolean(K_UPD_CHECK, true),
         updateAutoDownload = sp.getBoolean(K_UPD_AUTO, true),
         updateManifestUrl = sp.getString(K_UPD_URL, null)?.takeIf { it.isNotBlank() }
@@ -147,20 +132,6 @@ class Prefs(context: Context) {
         updateLastCheckMs = sp.getLong(K_UPD_LAST, 0L),
         updateSkippedVersion = sp.getInt(K_UPD_SKIP, 0),
     )
-
-    private fun readCameras(): List<CameraFeed> {
-        val raw = sp.getString(K_CAMERAS, null) ?: return emptyList()
-        return runCatching {
-            val arr = JSONArray(raw)
-            (0 until arr.length()).mapNotNull { i ->
-                val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                CameraFeed(
-                    name = o.optString("name"),
-                    url = o.optString("url"),
-                )
-            }.take(MAX_CAMERAS)
-        }.getOrDefault(emptyList())
-    }
 
     private fun readDouble(key: String, fallback: Double): Double =
         sp.getString(key, null)?.toDoubleOrNull() ?: fallback
@@ -189,15 +160,7 @@ class Prefs(context: Context) {
         putBoolean(K_DASH_AUDIO, s.dashRecordAudio)
         putBoolean(K_DASH_AUTOSTART, s.dashAutoStart)
         putInt(K_DASH_STORAGE_INDEX, s.dashStorageIndex)
-        putInt(K_CCTV_LAYOUT, s.cctvLayout)
-        putString(
-            K_CAMERAS,
-            JSONArray().apply {
-                s.cameras.take(MAX_CAMERAS).forEach { cam ->
-                    put(JSONObject().put("name", cam.name).put("url", cam.url))
-                }
-            }.toString(),
-        )
+        putInt(K_CCTV_RADIUS, s.cctvRadiusMiles)
         putBoolean(K_UPD_CHECK, s.updateCheckEnabled)
         putBoolean(K_UPD_AUTO, s.updateAutoDownload)
         putString(K_UPD_URL, s.updateManifestUrl)
@@ -258,8 +221,7 @@ class Prefs(context: Context) {
         const val K_DASH_AUDIO = "dash_record_audio"
         const val K_DASH_AUTOSTART = "dash_autostart"
         const val K_DASH_STORAGE_INDEX = "dash_storage_index"
-        const val K_CCTV_LAYOUT = "cctv_layout"
-        const val K_CAMERAS = "cctv_cameras"
+        const val K_CCTV_RADIUS = "cctv_radius_miles"
         const val K_UPD_CHECK = "update_check_enabled"
         const val K_UPD_AUTO = "update_auto_download"
         const val K_UPD_URL = "update_manifest_url"

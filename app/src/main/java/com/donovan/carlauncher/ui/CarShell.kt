@@ -117,6 +117,7 @@ fun CarShell(
                         car = car,
                         mapHolder = mapHolder,
                         onRequestPermissions = onRequestPermissions,
+                        onOpenCamera = { screen = CarScreen.CCTV },
                     )
 
                     CarScreen.MEDIA -> MediaScreen(

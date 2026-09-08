@@ -57,6 +57,8 @@ import com.donovan.carlauncher.ui.components.NavBanner
 import com.donovan.carlauncher.ui.components.NavSummary
 import com.donovan.carlauncher.ui.components.RoundControl
 import com.donovan.carlauncher.ui.map.MapCanvas
+import com.donovan.carlauncher.traffic.CatalogState
+import com.donovan.carlauncher.ui.map.CameraDot
 import com.donovan.carlauncher.ui.map.MapHolder
 import com.donovan.carlauncher.ui.map.MapSync
 import kotlinx.coroutines.delay
@@ -70,6 +72,7 @@ fun MapScreen(
     car: CarController,
     mapHolder: MapHolder,
     onRequestPermissions: () -> Unit,
+    onOpenCamera: () -> Unit = {},
 ) {
     val settings by car.prefs.state.collectAsStateWithLifecycle()
     val nav by car.nav.state.collectAsStateWithLifecycle()
@@ -84,6 +87,7 @@ fun MapScreen(
     var toast by remember { mutableStateOf<String?>(null) }
 
     MapSync(car, mapHolder)
+    TrafficDots(car, mapHolder, onOpenCamera)
 
     // Nominatim asks for no more than one request a second; debouncing keeps us well
     // inside that and stops a search firing on every keystroke.
@@ -430,5 +434,44 @@ private fun NavigatingBar(
                 ),
             ) { Text("Stop") }
         }
+    }
+}
+
+/**
+ * Keeps the map's blue camera dots in step with the catalogue, and turns a tap on one
+ * into a jump to that camera in the CCTV tab.
+ *
+ * The dots are loaded here as well as in the CCTV tab, so they appear for a driver who
+ * only ever looks at the map.
+ */
+@Composable
+private fun TrafficDots(
+    car: CarController,
+    mapHolder: MapHolder,
+    onOpenCamera: () -> Unit,
+) {
+    val settings by car.prefs.state.collectAsStateWithLifecycle()
+    val location by car.location.location.collectAsStateWithLifecycle()
+    val catalog by car.traffic.state.collectAsStateWithLifecycle()
+    val selected by car.traffic.selected.collectAsStateWithLifecycle()
+
+    val here = location?.let { LatLon(it.latitude, it.longitude) }
+    LaunchedEffect(here?.lat, here?.lon, settings.cctvRadiusMiles) {
+        car.traffic.ensureLoaded(here, settings.cctvRadiusMiles)
+    }
+
+    val dots = remember(catalog) {
+        (catalog as? CatalogState.Ready)?.cameras.orEmpty().map {
+            CameraDot(it.camera.id, it.camera.lat, it.camera.lon)
+        }
+    }
+    LaunchedEffect(dots) { mapHolder.setCameraDots(dots) }
+    LaunchedEffect(selected) { mapHolder.setSelectedCamera(selected?.id) }
+
+    DisposableEffect(Unit) {
+        mapHolder.setOnCameraTap { id ->
+            if (car.traffic.selectById(id)) onOpenCamera()
+        }
+        onDispose { mapHolder.setOnCameraTap(null) }
     }
 }

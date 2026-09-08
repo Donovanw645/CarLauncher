@@ -135,6 +135,8 @@ class MapHolder(context: Context) {
         isEnabled = false
     }
 
+    private val cameraDots = CameraDotsOverlay()
+
     /** True while the map should chase the car; a pan or pinch turns it off. */
     var following: Boolean = true
         private set
@@ -162,6 +164,7 @@ class MapHolder(context: Context) {
         routeLine.isEnabled = false
         routeCasing.isEnabled = false
         mapView.overlays.add(eventsOverlay)
+        mapView.overlays.add(cameraDots)
         mapView.overlays.add(routeCasing)
         mapView.overlays.add(routeLine)
         mapView.overlays.add(destMarker)
@@ -238,6 +241,24 @@ class MapHolder(context: Context) {
             destMarker.position = GeoPoint(point.lat, point.lon)
         }
         mapView.invalidate()
+    }
+
+    /** Blue dots for the public traffic cameras currently in range. */
+    fun setCameraDots(dots: List<CameraDot>) {
+        if (cameraDots.dots == dots) return
+        cameraDots.dots = dots
+        mapView.invalidate()
+    }
+
+    fun setSelectedCamera(id: String?) {
+        if (cameraDots.selectedId == id) return
+        cameraDots.selectedId = id
+        mapView.invalidate()
+    }
+
+    /** Tapping a dot hands back the camera id so the CCTV tab can jump to it. */
+    fun setOnCameraTap(listener: ((String) -> Unit)?) {
+        cameraDots.onTap = listener
     }
 
     fun setRoute(points: List<LatLon>) {
