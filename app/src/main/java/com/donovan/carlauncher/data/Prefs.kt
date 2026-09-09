@@ -44,6 +44,7 @@ data class CarSettings(
     val customTileUrl: String = "",
     val home: SavedPlace? = null,
     val work: SavedPlace? = null,
+    val school: SavedPlace? = null,
     /** Where the map was last looking, so a cold start without a fix is not mid-ocean. */
     val lastLat: Double = Double.NaN,
     val lastLon: Double = Double.NaN,
@@ -117,6 +118,7 @@ class Prefs(context: Context) {
         customTileUrl = sp.getString(K_TILES, null) ?: "",
         home = readPlace(K_HOME),
         work = readPlace(K_WORK),
+        school = readPlace(K_SCHOOL),
         lastLat = readDouble(K_LAST_LAT, Double.NaN),
         lastLon = readDouble(K_LAST_LON, Double.NaN),
         lastZoom = readDouble(K_LAST_ZOOM, 16.0),
@@ -154,6 +156,7 @@ class Prefs(context: Context) {
         putString(K_TILES, s.customTileUrl)
         writePlace(this, K_HOME, s.home)
         writePlace(this, K_WORK, s.work)
+        writePlace(this, K_SCHOOL, s.school)
         putString(K_LAST_LAT, s.lastLat.toString())
         putString(K_LAST_LON, s.lastLon.toString())
         putString(K_LAST_ZOOM, s.lastZoom.toString())
@@ -216,6 +219,7 @@ class Prefs(context: Context) {
         const val K_TILES = "tile_url"
         const val K_HOME = "place_home"
         const val K_WORK = "place_work"
+        const val K_SCHOOL = "place_school"
         const val K_LAST_LAT = "last_lat"
         const val K_LAST_LON = "last_lon"
         const val K_LAST_ZOOM = "last_zoom"

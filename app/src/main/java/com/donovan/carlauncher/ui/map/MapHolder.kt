@@ -1,15 +1,18 @@
 package com.donovan.carlauncher.ui.map
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.MotionEvent
+import android.view.animation.LinearInterpolator
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
 import com.donovan.carlauncher.R
 import com.donovan.carlauncher.data.MapTheme
 import com.donovan.carlauncher.nav.LatLon
+import com.donovan.carlauncher.nav.haversineMeters
 import org.json.JSONArray
 import org.json.JSONObject
 import org.maplibre.android.MapLibre
@@ -104,8 +107,14 @@ class MapHolder(context: Context) {
     private var style: Style? = null
 
     // Desired state, held so it survives the async style load and style swaps.
+    // `car` is where the last GPS fix put the car; `rendered*` is where it is being
+    // drawn right now, which lags behind while the tween catches up.
     private var car: LatLon? = null
     private var carBearing: Float = 0f
+    private var renderedCar: LatLon? = null
+    private var renderedBearing: Float = 0f
+    private var carTween: ValueAnimator? = null
+    private var lastFixAtMs: Long = 0L
     private var destination: LatLon? = null
     private var route: List<LatLon> = emptyList()
     private var dots: List<CameraDot> = emptyList()
@@ -338,17 +347,77 @@ class MapHolder(context: Context) {
 
     // -------------------------------------------------------------------- contents
 
+    /**
+     * Moves the car to a new fix, gliding rather than teleporting.
+     *
+     * GPS delivers roughly one fix a second, so drawing each one where it lands makes
+     * the car hop a car-length at a time. Instead the marker and the camera are tweened
+     * from where they currently are to the new fix, over about the time the next fix is
+     * expected to take - which is what makes Waze and Google Maps look smooth.
+     */
     fun setCar(point: LatLon?, headingDegrees: Float) {
         car = point
         carBearing = headingDegrees
-        pushCar()
+
+        if (point == null) {
+            cancelTween()
+            renderedCar = null
+            pushCar()
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val gap = if (lastFixAtMs == 0L) 0L else now - lastFixAtMs
+        lastFixAtMs = now
+
+        val from = renderedCar
+        val fromBearing = renderedBearing
+        // Snap on the first fix, and on any jump too big to be real movement - a GPS
+        // glitch or coming back from a long pause should not slide across the county.
+        if (from == null || haversineMeters(from, point) > SNAP_OVER_M) {
+            cancelTween()
+            renderedCar = point
+            renderedBearing = headingDegrees
+            pushCar()
+            followRendered()
+            return
+        }
+
+        cancelTween()
+        val duration = if (gap in MIN_TWEEN_MS..MAX_TWEEN_MS) gap else DEFAULT_TWEEN_MS
+        carTween = ValueAnimator.ofFloat(0f, 1f).apply {
+            this.duration = duration
+            interpolator = LinearInterpolator() // real motion is constant, not eased
+            addUpdateListener { anim ->
+                val t = anim.animatedValue as Float
+                renderedCar = LatLon(
+                    from.lat + (point.lat - from.lat) * t,
+                    from.lon + (point.lon - from.lon) * t,
+                )
+                renderedBearing = lerpAngle(fromBearing, headingDegrees, t)
+                pushCar()
+                followRendered()
+            }
+            start()
+        }
+    }
+
+    private fun cancelTween() {
+        carTween?.cancel()
+        carTween = null
+    }
+
+    /** Shortest way round the circle, so 350 to 10 turns +20 and not -340. */
+    private fun lerpAngle(from: Float, to: Float, t: Float): Float {
+        val delta = ((to - from + 540f) % 360f) - 180f
+        return (from + delta * t + 360f) % 360f
     }
 
     private fun pushCar() {
         val s = style ?: return
-        s.getSourceAs<GeoJsonSource>(SRC_CAR)?.setGeoJson(pointFc(car))
+        s.getSourceAs<GeoJsonSource>(SRC_CAR)?.setGeoJson(pointFc(renderedCar ?: car))
         // The icon points north; counter-rotate when the map itself is turned.
-        val rotation = if (headingUp) 0f else carBearing
+        val rotation = if (headingUp) 0f else renderedBearing
         s.getLayerAs<SymbolLayer>(LAYER_CAR)
             ?.setProperties(PropertyFactory.iconRotate(rotation))
     }
@@ -455,8 +524,13 @@ class MapHolder(context: Context) {
         m.animateCamera(CameraUpdateFactory.newCameraPosition(builder.build()))
     }
 
-    fun followCar(point: LatLon?, headingDegrees: Float) {
-        if (!following || point == null) return
+    /**
+     * Keeps the camera on the tweened position. Driven from the animation frames rather
+     * than from the fix, so the map slides under the car instead of stepping with it.
+     */
+    private fun followRendered() {
+        val point = renderedCar ?: return
+        if (!following) return
         val m = map ?: return
         val builder = CameraPosition.Builder(m.cameraPosition)
             .target(LatLng(point.lat, point.lon))
@@ -464,7 +538,7 @@ class MapHolder(context: Context) {
         // in to something you can drive by. Panning clears `following`, so this cannot
         // fight a deliberate zoom-out.
         if (m.cameraPosition.zoom < DRIVING_ZOOM_FLOOR) builder.zoom(DEFAULT_ZOOM)
-        if (headingUp) builder.bearing(headingDegrees.toDouble())
+        if (headingUp) builder.bearing(renderedBearing.toDouble())
         m.moveCamera(CameraUpdateFactory.newCameraPosition(builder.build()))
     }
 
@@ -536,6 +610,7 @@ class MapHolder(context: Context) {
     fun onLowMemory() = mapView.onLowMemory()
 
     fun destroy() {
+        cancelTween()
         runCatching { mapView.onDestroy() }
     }
 
@@ -557,6 +632,11 @@ class MapHolder(context: Context) {
         const val TOUCH_SLOP = 28f
 
         const val DEFAULT_ZOOM = 16.0
+        /** Beyond this the fix is a jump, not movement, so snap instead of sliding. */
+        const val SNAP_OVER_M = 250.0
+        const val MIN_TWEEN_MS = 250L
+        const val MAX_TWEEN_MS = 2_500L
+        const val DEFAULT_TWEEN_MS = 1_000L
         const val DRIVING_ZOOM_FLOOR = 10.0
         // Roughly the middle of California - only ever seen for the instant before the
         // first GPS fix on a fresh install.

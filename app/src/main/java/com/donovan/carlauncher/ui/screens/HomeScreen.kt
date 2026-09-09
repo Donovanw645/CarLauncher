@@ -19,6 +19,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.material.icons.rounded.School
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.MaterialTheme
@@ -160,6 +161,20 @@ fun HomeScreen(
                             car.navigateTo(
                                 Place(place.label, place.address, LatLon(place.lat, place.lon))
                             ) ?: "Routing to Work"
+                        }
+                    }
+                    MapChip(
+                        icon = Icons.Rounded.School,
+                        label = settings.school?.let { "School" } ?: "Set school",
+                        accent = settings.school != null,
+                    ) {
+                        val place = settings.school
+                        toast = if (place == null) {
+                            "Set School in Settings"
+                        } else {
+                            car.navigateTo(
+                                Place(place.label, place.address, LatLon(place.lat, place.lon))
+                            ) ?: "Routing to School"
                         }
                     }
                     MapChip(Icons.Rounded.Search, "Search", onClick = onOpenMaps)

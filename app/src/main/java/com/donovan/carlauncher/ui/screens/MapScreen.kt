@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material.icons.rounded.Place
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.School
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.Button
@@ -361,7 +362,8 @@ private fun QuickDestinations(car: CarController, onGo: (Place) -> Unit) {
     val settings by car.prefs.state.collectAsStateWithLifecycle()
     val home = settings.home
     val work = settings.work
-    if (home == null && work == null) return
+    val school = settings.school
+    if (home == null && work == null && school == null) return
 
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         if (home != null) {
@@ -380,6 +382,15 @@ private fun QuickDestinations(car: CarController, onGo: (Place) -> Unit) {
                 Icon(Icons.Rounded.Work, contentDescription = null, Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Work")
+            }
+        }
+        if (school != null) {
+            Button(onClick = {
+                onGo(Place(school.label, school.address, LatLon(school.lat, school.lon)))
+            }) {
+                Icon(Icons.Rounded.School, contentDescription = null, Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("School")
             }
         }
     }

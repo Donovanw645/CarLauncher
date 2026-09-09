@@ -28,8 +28,9 @@ fun MapSync(car: CarController, mapHolder: MapHolder) {
 
     LaunchedEffect(location, heading) {
         val point = location?.let { LatLon(it.latitude, it.longitude) }
+        // setCar tweens both the marker and the camera; there is no separate follow
+        // step any more, or the camera would jump ahead of the marker it is chasing.
         mapHolder.setCar(point, heading)
-        mapHolder.followCar(point, heading)
     }
 
     LaunchedEffect(navState.route, navState.destination) {

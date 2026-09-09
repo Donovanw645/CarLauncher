@@ -132,6 +132,12 @@ fun SettingsScreen(
                 place = settings.work,
                 onSave = { p -> car.prefs.update { it.copy(work = p) } },
             )
+            SavedPlaceRow(
+                car = car,
+                label = "School",
+                place = settings.school,
+                onSave = { p -> car.prefs.update { it.copy(school = p) } },
+            )
             TextRow(
                 label = "Routing server (OSRM)",
                 description = "The public demo server has no uptime guarantee. " +
