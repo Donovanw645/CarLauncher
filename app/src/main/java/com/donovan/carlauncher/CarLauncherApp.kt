@@ -15,6 +15,8 @@ import com.donovan.carlauncher.nav.Speech
 import com.donovan.carlauncher.system.AppRepo
 import com.donovan.carlauncher.system.CarStatusRepo
 import com.donovan.carlauncher.system.LocationRepo
+import com.donovan.carlauncher.hazards.HazardRepo
+import com.donovan.carlauncher.offline.OfflineMaps
 import com.donovan.carlauncher.traffic.TrafficRepo
 import com.donovan.carlauncher.update.Updater
 import kotlinx.coroutines.CoroutineScope
@@ -41,6 +43,8 @@ class CarController(private val app: Application) {
     val speech = Speech(app)
     val updater = Updater(app, prefs, scope)
     val traffic = TrafficRepo(app, scope)
+    val hazards = HazardRepo(scope)
+    val offlineMaps = OfflineMaps(app)
 
     val geocoder = GeocodeApi { prefs.current.geocoderBaseUrl }
     val router = RouteApi { prefs.current.routerBaseUrl }

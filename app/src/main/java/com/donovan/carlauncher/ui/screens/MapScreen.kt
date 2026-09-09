@@ -51,6 +51,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.donovan.carlauncher.CarController
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import com.donovan.carlauncher.hazards.HazardKind
+import com.donovan.carlauncher.hazards.HazardState
+import com.donovan.carlauncher.hazards.RoadHazard
 import com.donovan.carlauncher.nav.LatLon
 import com.donovan.carlauncher.nav.Place
 import com.donovan.carlauncher.ui.components.CarCard
@@ -60,6 +68,7 @@ import com.donovan.carlauncher.ui.components.RoundControl
 import com.donovan.carlauncher.ui.map.MapCanvas
 import com.donovan.carlauncher.traffic.CatalogState
 import com.donovan.carlauncher.ui.map.CameraDot
+import com.donovan.carlauncher.ui.map.HazardDot
 import com.donovan.carlauncher.ui.map.MapHolder
 import com.donovan.carlauncher.ui.map.MapSync
 import kotlinx.coroutines.delay
@@ -86,9 +95,11 @@ fun MapScreen(
     var searchError by remember { mutableStateOf<String?>(null) }
     var pendingPin by remember { mutableStateOf<Place?>(null) }
     var toast by remember { mutableStateOf<String?>(null) }
+    val selectedHazard by car.hazards.selected.collectAsStateWithLifecycle()
 
     MapSync(car, mapHolder)
     TrafficDots(car, mapHolder, onOpenCamera)
+    HazardDots(car, mapHolder)
 
     // Photon has no one-per-second policy the way Nominatim does, so this only has to
     // be long enough to avoid firing mid-keystroke - short enough that results feel
@@ -236,6 +247,13 @@ fun MapScreen(
             contentAlignment = Alignment.Center,
         ) {
             when {
+                selectedHazard != null -> HazardCard(
+                    hazard = selectedHazard!!,
+                    distanceMiles = car.hazards.nearby
+                        .firstOrNull { it.hazard.id == selectedHazard!!.id }?.miles,
+                    onDismiss = { car.hazards.select(null) },
+                )
+
                 pendingPin != null -> PinConfirm(
                     place = pendingPin!!,
                     onGo = { go(pendingPin!!) },
@@ -500,5 +518,92 @@ private fun TrafficDots(
             if (car.traffic.selectById(id)) onOpenCamera()
         }
         onDispose { mapHolder.setOnCameraTap(null) }
+    }
+}
+
+/**
+ * Keeps the red and amber hazard dots in step with the feeds, and turns a tap on one
+ * into a selection the map screen can show details for.
+ */
+@Composable
+private fun HazardDots(car: CarController, mapHolder: MapHolder) {
+    val settings by car.prefs.state.collectAsStateWithLifecycle()
+    val location by car.location.location.collectAsStateWithLifecycle()
+    val hazardState by car.hazards.state.collectAsStateWithLifecycle()
+
+    val here = location?.let { LatLon(it.latitude, it.longitude) }
+    LaunchedEffect(here?.lat, here?.lon, settings.hazardsEnabled, settings.cctvRadiusMiles) {
+        if (settings.hazardsEnabled) {
+            car.hazards.ensureLoaded(here, settings.cctvRadiusMiles)
+        }
+    }
+
+    val dots = remember(hazardState, settings.hazardsEnabled) {
+        if (!settings.hazardsEnabled) emptyList() else {
+            (hazardState as? HazardState.Ready)?.hazards.orEmpty().map {
+                HazardDot(
+                    id = it.hazard.id,
+                    lat = it.hazard.lat,
+                    lon = it.hazard.lon,
+                    major = it.hazard.kind != HazardKind.LANE_CLOSURE,
+                )
+            }
+        }
+    }
+    LaunchedEffect(dots) { mapHolder.setHazardDots(dots) }
+
+    DisposableEffect(Unit) {
+        mapHolder.setOnHazardTap { id -> car.hazards.selectById(id) }
+        onDispose { mapHolder.setOnHazardTap(null) }
+    }
+}
+
+/** The card that appears when a hazard dot is tapped. */
+@Composable
+private fun HazardCard(hazard: RoadHazard, distanceMiles: Double?, onDismiss: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val major = hazard.kind != HazardKind.LANE_CLOSURE
+    CarCard(contentPadding = 14.dp) {
+        Row(verticalAlignment = Alignment.Top) {
+            Box(
+                Modifier
+                    .padding(top = 4.dp)
+                    .size(12.dp)
+                    .background(
+                        if (major) Color(0xFFFF5252) else Color(0xFFF5A623),
+                        CircleShape,
+                    )
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.widthIn(max = 460.dp)) {
+                Text(
+                    hazard.kind.label + (distanceMiles?.let { " · %.1f mi".format(it) } ?: ""),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (major) Color(0xFFFF8A80) else Color(0xFFFFD180),
+                )
+                Text(
+                    hazard.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.onSurface,
+                )
+                if (hazard.detail.isNotBlank()) {
+                    Text(
+                        hazard.detail,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = scheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    "Source: " + hazard.source,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
     }
 }

@@ -63,6 +63,11 @@ data class CarSettings(
     /** Rotate the map so the car always points up, instead of north-up. */
     val mapHeadingUp: Boolean = true,
 
+    /** Show live road hazards from Caltrans and CHP on the map. */
+    val hazardsEnabled: Boolean = true,
+    /** Which volume the offline map database lives on. */
+    val offlineStorageIndex: Int = 0,
+
     // CCTV
     /** How far from the car to look for public Caltrans cameras. */
     val cctvRadiusMiles: Int = 25,
@@ -130,6 +135,8 @@ class Prefs(context: Context) {
         dashAutoStart = sp.getBoolean(K_DASH_AUTOSTART, false),
         dashStorageIndex = sp.getInt(K_DASH_STORAGE_INDEX, 0),
         mapHeadingUp = sp.getBoolean(K_HEADING_UP, true),
+        hazardsEnabled = sp.getBoolean(K_HAZARDS, true),
+        offlineStorageIndex = sp.getInt(K_OFFLINE_STORAGE, 0),
         cctvRadiusMiles = sp.getInt(K_CCTV_RADIUS, 25),
         updateCheckEnabled = sp.getBoolean(K_UPD_CHECK, true),
         updateAutoDownload = sp.getBoolean(K_UPD_AUTO, true),
@@ -168,6 +175,8 @@ class Prefs(context: Context) {
         putBoolean(K_DASH_AUTOSTART, s.dashAutoStart)
         putInt(K_DASH_STORAGE_INDEX, s.dashStorageIndex)
         putBoolean(K_HEADING_UP, s.mapHeadingUp)
+        putBoolean(K_HAZARDS, s.hazardsEnabled)
+        putInt(K_OFFLINE_STORAGE, s.offlineStorageIndex)
         putInt(K_CCTV_RADIUS, s.cctvRadiusMiles)
         putBoolean(K_UPD_CHECK, s.updateCheckEnabled)
         putBoolean(K_UPD_AUTO, s.updateAutoDownload)
@@ -231,6 +240,8 @@ class Prefs(context: Context) {
         const val K_DASH_AUTOSTART = "dash_autostart"
         const val K_DASH_STORAGE_INDEX = "dash_storage_index"
         const val K_HEADING_UP = "map_heading_up"
+        const val K_HAZARDS = "hazards_enabled"
+        const val K_OFFLINE_STORAGE = "offline_storage_index"
         const val K_CCTV_RADIUS = "cctv_radius_miles"
         const val K_UPD_CHECK = "update_check_enabled"
         const val K_UPD_AUTO = "update_auto_download"

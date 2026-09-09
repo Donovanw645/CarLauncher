@@ -34,6 +34,12 @@ import java.util.Calendar
 /** One camera's position on the map. */
 data class CameraDot(val id: String, val lat: Double, val lon: Double)
 
+/**
+ * One hazard's position. [major] splits the two draw layers - red for things that
+ * stop you (closures, chain control, collisions), amber for things that slow you.
+ */
+data class HazardDot(val id: String, val lat: Double, val lon: Double, val major: Boolean)
+
 object MapStyles {
 
     /**
@@ -115,9 +121,11 @@ class MapHolder(context: Context) {
     private var renderedBearing: Float = 0f
     private var carTween: ValueAnimator? = null
     private var lastFixAtMs: Long = 0L
+    private var pulledToDrivingZoom = false
     private var destination: LatLon? = null
     private var route: List<LatLon> = emptyList()
     private var dots: List<CameraDot> = emptyList()
+    private var hazardDots: List<HazardDot> = emptyList()
     private var selectedCamera: String? = null
     private var styleUri: String? = null
     private var pendingCamera: CameraPosition? = null
@@ -131,6 +139,7 @@ class MapHolder(context: Context) {
     private var onUserPan: (() -> Unit)? = null
     private var onLongPress: ((LatLon) -> Unit)? = null
     private var onCameraTap: ((String) -> Unit)? = null
+    private var onHazardTap: ((String) -> Unit)? = null
 
     init {
         mapView.getMapAsync { m ->
@@ -160,21 +169,26 @@ class MapHolder(context: Context) {
             }
 
             m.addOnMapClickListener { p ->
-                val handler = onCameraTap
-                if (handler == null) {
-                    false
+                val screen = m.projection.toScreenLocation(p)
+                // A finger is far bigger than a 6px dot, so search a box around it.
+                val box = android.graphics.RectF(
+                    screen.x - TOUCH_SLOP, screen.y - TOUCH_SLOP,
+                    screen.x + TOUCH_SLOP, screen.y + TOUCH_SLOP,
+                )
+                // Hazards are hit-tested first: a closed road matters more than a webcam.
+                val hazard = onHazardTap?.let { handler ->
+                    m.queryRenderedFeatures(box, LAYER_HAZ_MAJOR, LAYER_HAZ_MINOR)
+                        .firstOrNull()?.getStringProperty("id")?.also { handler(it) }
+                }
+                if (hazard != null) {
+                    true
                 } else {
-                    val screen = m.projection.toScreenLocation(p)
-                    // A finger is far bigger than a 5px dot, so search a box around it.
-                    val hit = m.queryRenderedFeatures(
-                        android.graphics.RectF(
-                            screen.x - TOUCH_SLOP, screen.y - TOUCH_SLOP,
-                            screen.x + TOUCH_SLOP, screen.y + TOUCH_SLOP,
-                        ),
-                        LAYER_CAMS,
-                    ).firstOrNull()
-                    val id = hit?.getStringProperty("id")
-                    if (id != null) {
+                    val handler = onCameraTap
+                    val id = if (handler == null) null else {
+                        m.queryRenderedFeatures(box, LAYER_CAMS)
+                            .firstOrNull()?.getStringProperty("id")
+                    }
+                    if (id != null && handler != null) {
                         selectedCamera = id
                         pushCameras()
                         handler(id)
@@ -191,6 +205,7 @@ class MapHolder(context: Context) {
                 .zoom(DEFAULT_ZOOM)
                 .build()
             m.moveCamera(CameraUpdateFactory.newCameraPosition(start))
+            if (start.zoom >= DRIVING_ZOOM_FLOOR) pulledToDrivingZoom = true
             pendingCamera = null
         }
         attachTouchWatcher()
@@ -220,6 +235,8 @@ class MapHolder(context: Context) {
     fun setOnLongPress(listener: ((LatLon) -> Unit)?) { onLongPress = listener }
 
     fun setOnCameraTap(listener: ((String) -> Unit)?) { onCameraTap = listener }
+
+    fun setOnHazardTap(listener: ((String) -> Unit)?) { onHazardTap = listener }
 
     fun detachFromParent() {
         (mapView.parent as? ViewGroup)?.removeView(mapView)
@@ -283,6 +300,8 @@ class MapHolder(context: Context) {
 
         s.addSource(GeoJsonSource(SRC_ROUTE, EMPTY_FC))
         s.addSource(GeoJsonSource(SRC_CAMS, EMPTY_FC))
+        s.addSource(GeoJsonSource(SRC_HAZ_MAJOR, EMPTY_FC))
+        s.addSource(GeoJsonSource(SRC_HAZ_MINOR, EMPTY_FC))
         s.addSource(GeoJsonSource(SRC_DEST, EMPTY_FC))
         s.addSource(GeoJsonSource(SRC_CAR, EMPTY_FC))
 
@@ -312,6 +331,22 @@ class MapHolder(context: Context) {
             )
         )
         s.addLayer(
+            CircleLayer(LAYER_HAZ_MINOR, SRC_HAZ_MINOR).withProperties(
+                PropertyFactory.circleColor("#F5A623"),
+                PropertyFactory.circleRadius(7f),
+                PropertyFactory.circleStrokeColor("#3A2A05"),
+                PropertyFactory.circleStrokeWidth(2f),
+            )
+        )
+        s.addLayer(
+            CircleLayer(LAYER_HAZ_MAJOR, SRC_HAZ_MAJOR).withProperties(
+                PropertyFactory.circleColor("#FF5252"),
+                PropertyFactory.circleRadius(8f),
+                PropertyFactory.circleStrokeColor("#FFE3E3"),
+                PropertyFactory.circleStrokeWidth(2f),
+            )
+        )
+        s.addLayer(
             SymbolLayer(LAYER_DEST, SRC_DEST).withProperties(
                 PropertyFactory.iconImage(IMG_PIN),
                 PropertyFactory.iconAllowOverlap(true),
@@ -333,6 +368,7 @@ class MapHolder(context: Context) {
         pushDestination()
         pushRoute()
         pushCameras()
+        pushHazards()
     }
 
     private fun drawableToBitmap(resId: Int): Bitmap {
@@ -495,6 +531,38 @@ class MapHolder(context: Context) {
             ?.setGeoJson(JSONObject().put("type", "FeatureCollection").put("features", features).toString())
     }
 
+    /** Red and amber hazard dots, split across two layers by severity. */
+    fun setHazardDots(newDots: List<HazardDot>) {
+        if (hazardDots == newDots) return
+        hazardDots = newDots
+        pushHazards()
+    }
+
+    private fun pushHazards() {
+        val s = style ?: return
+        fun push(source: String, wanted: Boolean) {
+            val features = JSONArray()
+            for (d in hazardDots) {
+                if (d.major != wanted) continue
+                features.put(
+                    JSONObject().apply {
+                        put("type", "Feature")
+                        put("properties", JSONObject().put("id", d.id))
+                        put("geometry", JSONObject().apply {
+                            put("type", "Point")
+                            put("coordinates", JSONArray().put(d.lon).put(d.lat))
+                        })
+                    }
+                )
+            }
+            s.getSourceAs<GeoJsonSource>(source)?.setGeoJson(
+                JSONObject().put("type", "FeatureCollection").put("features", features).toString()
+            )
+        }
+        push(SRC_HAZ_MAJOR, true)
+        push(SRC_HAZ_MINOR, false)
+    }
+
     private fun pointFc(p: LatLon?): String = if (p == null) EMPTY_FC else featureCollection(
         JSONObject().apply {
             put("type", "Feature")
@@ -534,10 +602,13 @@ class MapHolder(context: Context) {
         val m = map ?: return
         val builder = CameraPosition.Builder(m.cameraPosition)
             .target(LatLng(point.lat, point.lon))
-        // A first fix arriving while the map is still at its opening zoom should pull
-        // in to something you can drive by. Panning clears `following`, so this cannot
-        // fight a deliberate zoom-out.
-        if (m.cameraPosition.zoom < DRIVING_ZOOM_FLOOR) builder.zoom(DEFAULT_ZOOM)
+        // A first fix arriving while the map is still at its opening world view should
+        // pull in to something you can drive by - but only once. Doing it on every fix
+        // means the zoom-out button cannot get past z10: the next fix drags it back.
+        if (!pulledToDrivingZoom && m.cameraPosition.zoom < DRIVING_ZOOM_FLOOR) {
+            builder.zoom(DEFAULT_ZOOM)
+            pulledToDrivingZoom = true
+        }
         if (headingUp) builder.bearing(renderedBearing.toDouble())
         m.moveCamera(CameraUpdateFactory.newCameraPosition(builder.build()))
     }
@@ -617,12 +688,16 @@ class MapHolder(context: Context) {
     private companion object {
         const val SRC_ROUTE = "car-route"
         const val SRC_CAMS = "car-cams"
+        const val SRC_HAZ_MAJOR = "car-haz-major"
+        const val SRC_HAZ_MINOR = "car-haz-minor"
         const val SRC_DEST = "car-dest"
         const val SRC_CAR = "car-position"
 
         const val LAYER_ROUTE_CASING = "car-route-casing"
         const val LAYER_ROUTE = "car-route-line"
         const val LAYER_CAMS = "car-cams-dots"
+        const val LAYER_HAZ_MAJOR = "car-haz-major-dots"
+        const val LAYER_HAZ_MINOR = "car-haz-minor-dots"
         const val LAYER_DEST = "car-dest-pin"
         const val LAYER_CAR = "car-marker"
 

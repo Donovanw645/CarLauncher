@@ -24,6 +24,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.donovan.carlauncher.CarController
+import androidx.compose.material3.LinearProgressIndicator
+import com.donovan.carlauncher.offline.OfflineState
 import com.donovan.carlauncher.dashcam.Dashcam
 import com.donovan.carlauncher.dashcam.formatBytes
 import com.donovan.carlauncher.data.CameraFacing
@@ -247,6 +250,22 @@ fun SettingsScreen(
                 description = Dashcam.loopDir(context).absolutePath,
                 buttonText = "Refresh",
                 onClick = { Dashcam.refreshClips(context) },
+            )
+        }
+
+        // ----------------------------------------------------------------- offline
+        SettingsGroup("Offline maps") {
+            OfflineMapsRow(car)
+        }
+
+        // ----------------------------------------------------------------- hazards
+        SettingsGroup("Road hazards") {
+            ToggleRow(
+                label = "Show hazards on the map",
+                description = "Collisions, closures and chain controls from Caltrans " +
+                    "and CHP, drawn as red and amber dots. Tap one for details.",
+                checked = settings.hazardsEnabled,
+                onChange = { v -> car.prefs.update { it.copy(hazardsEnabled = v) } },
             )
         }
 
@@ -556,6 +575,106 @@ private fun SavedPlaceRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+    }
+}
+
+/**
+ * Download the California basemap for offline use.
+ *
+ * The size warning is not decoration: this is roughly a gigabyte and several hundred
+ * thousand tile requests against a free community server, so it should be a deliberate
+ * act done once on wifi, not something a driver trips over.
+ */
+@Composable
+private fun OfflineMapsRow(car: CarController) {
+    val scheme = MaterialTheme.colorScheme
+    val settings by car.prefs.state.collectAsStateWithLifecycle()
+    val state by car.offlineMaps.state.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) { car.offlineMaps.refreshExisting() }
+
+    val options = remember { car.offlineMaps.storageOptions() }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "Stores the whole state to zoom 14 so the map still draws with no signal. " +
+                "About 1 GB and a long download - do it on wifi. Routing still needs a " +
+                "connection.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = scheme.onSurfaceVariant,
+        )
+
+        if (options.size > 1) {
+            ChoiceRow(
+                label = "Store map on",
+                options = options.map { it.index to "${it.label} · ${formatBytes(it.freeBytes)} free" },
+                selected = options.firstOrNull { it.index == settings.offlineStorageIndex }?.index
+                    ?: options.first().index,
+                onSelect = { v -> car.prefs.update { it.copy(offlineStorageIndex = v) } },
+            )
+        }
+
+        when (val st = state) {
+            is OfflineState.Downloading -> {
+                LinearProgressIndicator(
+                    progress = { st.fraction },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "${st.completedTiles} tiles · ${formatBytes(st.completedBytes)}" +
+                        if (st.precise) " · ${(st.fraction * 100).toInt()}%" else " · sizing…",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = scheme.onSurfaceVariant,
+                )
+                Button(onClick = { car.offlineMaps.pause() }) { Text("Pause") }
+            }
+
+            is OfflineState.Paused -> {
+                Text(
+                    "Paused at ${st.completedTiles} tiles · ${formatBytes(st.completedBytes)}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = scheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = { car.offlineMaps.start(settings.offlineStorageIndex) }) {
+                        Text("Resume")
+                    }
+                    Button(onClick = { car.offlineMaps.delete() }) { Text("Delete") }
+                }
+            }
+
+            is OfflineState.Complete -> {
+                Text(
+                    "California downloaded · ${st.tiles} tiles · ${formatBytes(st.bytes)}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = scheme.primary,
+                )
+                Button(onClick = { car.offlineMaps.delete() }) { Text("Delete download") }
+            }
+
+            is OfflineState.Failed -> {
+                Text(
+                    st.message,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = scheme.error,
+                )
+                Button(onClick = { car.offlineMaps.start(settings.offlineStorageIndex) }) {
+                    Text("Try again")
+                }
+            }
+
+            OfflineState.Preparing -> Text(
+                "Preparing…",
+                style = MaterialTheme.typography.labelMedium,
+                color = scheme.onSurfaceVariant,
+            )
+
+            OfflineState.None -> Button(
+                onClick = { car.offlineMaps.start(settings.offlineStorageIndex) }
+            ) {
+                Text("Download California")
+            }
         }
     }
 }

@@ -23,8 +23,8 @@ android {
         targetSdk = 35
         // Bump both on every release. versionCode must increase monotonically or the
         // updater on the tablet will refuse the build as a downgrade.
-        versionCode = 9
-        versionName = "1.8"
+        versionCode = 10
+        versionName = "1.9"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         resourceConfigurations += listOf("en")
     }
@@ -114,4 +114,7 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.coil.compose)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.json.jvm)
 }
