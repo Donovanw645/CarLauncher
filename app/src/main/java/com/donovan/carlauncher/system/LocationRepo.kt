@@ -34,6 +34,7 @@ class LocationRepo(private val context: Context) {
 
     private val listener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
+            if (!isBetterFix(location, _location.value)) return
             _location.value = location
             // Bearing is only meaningful once actually moving; below walking pace the
             // GPS bearing jitters wildly, so hold the last good value.
@@ -46,6 +47,16 @@ class LocationRepo(private val context: Context) {
         override fun onProviderEnabled(provider: String) = Unit
         override fun onProviderDisabled(provider: String) = Unit
     }
+
+    private fun Location.toFix() = Fix(
+        provider = provider,
+        accuracyM = if (hasAccuracy()) accuracy else Float.MAX_VALUE,
+        elapsedNanos = elapsedRealtimeNanos,
+    )
+
+    /** See [FixQuality] - this is where the backwards-teleport rule lives. */
+    private fun isBetterFix(candidate: Location, current: Location?): Boolean =
+        FixQuality.isBetter(candidate.toFix(), current?.toFix())
 
     fun hasPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
@@ -67,7 +78,13 @@ class LocationRepo(private val context: Context) {
                 lm.requestLocationUpdates(p, 1000L, 0f, listener, Looper.getMainLooper())
             }
             if (_location.value == null) {
-                runCatching { lm.getLastKnownLocation(p) }.getOrNull()?.let { _location.value = it }
+                runCatching { lm.getLastKnownLocation(p) }.getOrNull()?.let { last ->
+                    // Seed only with something recent. A last-known fix from yesterday's
+                    // car park is worse than showing nothing until the first real fix.
+                    val age = android.os.SystemClock.elapsedRealtimeNanos() -
+                        last.elapsedRealtimeNanos
+                    if (age in 0 until FixQuality.SEED_MAX_AGE_NANOS) _location.value = last
+                }
             }
         }
     }
